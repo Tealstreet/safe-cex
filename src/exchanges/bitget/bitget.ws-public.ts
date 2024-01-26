@@ -205,7 +205,7 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
 
     return () => {
       this.messageHandlers[topic] = [
-        ...this.messageHandlers[topic].filter((f) => f !== parser),
+        ...(this.messageHandlers[topic] || []).filter((f) => f !== parser),
       ];
 
       this.topics[channel][opts.symbol]--;
@@ -319,7 +319,7 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
 
     return () => {
       this.messageHandlers[topic] = [
-        ...this.messageHandlers[topic].filter((f) => f !== parser),
+        ...(this.messageHandlers[topic] || []).filter((f) => f !== parser),
       ];
 
       orderBook.asks = [];

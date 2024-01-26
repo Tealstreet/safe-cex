@@ -159,7 +159,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
 
     return () => {
       this.messageHandlers[handler] = [
-        ...this.messageHandlers[handler].filter((f) => f !== parser),
+        ...(this.messageHandlers[handler] || []).filter((f) => f !== parser),
       ];
 
       this.topics[topic]--;
@@ -274,7 +274,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
 
     return () => {
       this.messageHandlers[handler] = [
-        ...this.messageHandlers[handler].filter((f) => f !== parser),
+        ...(this.messageHandlers[handler] || []).filter((f) => f !== parser),
       ];
       orderBook.asks = [];
       orderBook.bids = [];

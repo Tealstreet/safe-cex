@@ -169,7 +169,7 @@ export class BybitPublicWebsocket extends BaseWebSocket<BybitExchange> {
 
     return () => {
       this.messageHandlers[topic] = [
-        ...this.messageHandlers[topic].filter((f) => f !== parser),
+        ...(this.messageHandlers[topic] || []).filter((f) => f !== parser),
       ];
 
       if (!this.messageHandlers[topic].length) {
@@ -266,7 +266,7 @@ export class BybitPublicWebsocket extends BaseWebSocket<BybitExchange> {
 
     return () => {
       this.messageHandlers[topic] = [
-        ...this.messageHandlers[topic].filter((f) => f !== parser),
+        ...(this.messageHandlers[topic] || []).filter((f) => f !== parser),
       ];
 
       if (!this.messageHandlers[topic].length) {

@@ -151,7 +151,7 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
 
     return () => {
       this.messageHandlers[handler] = [
-        ...this.messageHandlers[handler].filter((f) => f !== parser),
+        ...(this.messageHandlers[handler] || []).filter((f) => f !== parser),
       ];
 
       if (timeoutId) {
@@ -259,7 +259,7 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
 
     return () => {
       this.messageHandlers[handler] = [
-        ...this.messageHandlers[handler].filter((f) => f !== parser),
+        ...(this.messageHandlers[handler] || []).filter((f) => f !== parser),
       ];
 
       if (!this.messageHandlers[handler].length) {
