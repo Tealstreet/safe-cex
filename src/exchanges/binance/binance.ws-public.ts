@@ -48,7 +48,8 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
       const handlers = Object.entries(this.messageHandlers);
 
       for (const [topic, handler] of handlers) {
-        if (data.includes(`e":"${topic}`)) {
+        const [leftmost] = topic.split('.');
+        if (data.includes(`e":"${leftmost}`)) {
           const json = jsonParse(data);
           if (json) handler(Array.isArray(json) ? json : [json]);
           break;
@@ -107,11 +108,12 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
 
   listenOHLCV = (opts: OHLCVOptions, callback: (candle: Candle) => void) => {
     const topic = `${opts.symbol.toLowerCase()}@kline_${opts.interval}`;
+    const handler = `kline.${opts.interval}.${opts.symbol}`;
 
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
-        this.messageHandlers.kline = ([json]: Data) => {
-          if (opts.symbol === json.k.s) {
+        this.messageHandlers[handler] = ([json]: Data) => {
+          if (opts.symbol === json.k.s && json.k.i === opts.interval) {
             callback({
               timestamp: json.k.t / 1000,
               open: parseFloat(json.k.o),
@@ -134,7 +136,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.kline;
+      delete this.messageHandlers[handler];
 
       if (this.isConnected) {
         const payload = { method: 'UNSUBSCRIBE', params: [topic], id: 2 };
