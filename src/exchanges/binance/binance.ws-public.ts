@@ -52,7 +52,6 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
         if (data.includes(`e":"${leftmost}`)) {
           const json = jsonParse(data);
           if (json) handler(Array.isArray(json) ? json : [json]);
-          break;
         }
       }
     }
@@ -152,6 +151,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     let timeoutId: NodeJS.Timeout | null = null;
 
     const topic = `${symbol.toLowerCase()}@depth`;
+    const handler = `depthUpdate.${symbol}`;
     const orderBook: OrderBook = { bids: [], asks: [] };
     const innerState = {
       updates: [] as any[],
@@ -204,7 +204,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
         // 3. store all incoming updates in an array
         // 4. when the snapshot is received, apply all updates and send the order book to the callback
         // 5. then on each update, apply it to the order book and send it to the callback
-        this.messageHandlers.depthUpdate = ([data]: Data) => {
+        this.messageHandlers[handler] = ([data]: Data) => {
           // incorrect symbol, we don't take account
           if (data.s !== symbol) return;
 
@@ -239,7 +239,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.depthUpdate;
+      delete this.messageHandlers[handler];
       orderBook.asks = [];
       orderBook.bids = [];
       innerState.updates = [];
