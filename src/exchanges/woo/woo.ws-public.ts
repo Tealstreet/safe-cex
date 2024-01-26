@@ -1,3 +1,5 @@
+import { flatten } from 'lodash';
+
 import type { OHLCVOptions, Candle, OrderBook } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
@@ -9,16 +11,20 @@ import { normalizeSymbol, reverseSymbol } from './woo.utils';
 
 type Data = Record<string, any>;
 type MessageHandlers = {
-  [topic: string]: (json: Data) => void;
+  [topic: string]: Array<(json: Data) => void>;
+};
+type SubscribedTopics = {
+  [id: string]: string;
 };
 
 export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
+  topics: SubscribedTopics = {};
   messageHandlers: MessageHandlers = {
-    ping: () => this.handlePingEvent(),
-    pong: () => this.handlePongEvent(),
-    tickers: ({ data }: Data) => this.handleTickersStreamEvents(data),
-    bbos: ({ data }: Data) => this.handleBBOStreamEvents(data),
-    markprices: ({ data }: Data) => this.handleMarkPricesStreamEvents(data),
+    ping: [() => this.handlePingEvent()],
+    pong: [() => this.handlePongEvent()],
+    tickers: [({ data }: Data) => this.handleTickersStreamEvents(data)],
+    bbos: [({ data }: Data) => this.handleBBOStreamEvents(data)],
+    markprices: [({ data }: Data) => this.handleMarkPricesStreamEvents(data)],
   };
 
   connectAndSubscribe = () => {
@@ -42,6 +48,15 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
       this.ws?.send?.(
         JSON.stringify({ event: 'subscribe', topic: 'markprices' })
       );
+      this.subscribe();
+    }
+  };
+
+  subscribe = () => {
+    const topics = flatten(Object.values(this.topics));
+    for (const topic of topics) {
+      const payload = { event: 'subscribe', topic };
+      this.ws?.send?.(JSON.stringify(payload));
     }
   };
 
@@ -55,7 +70,10 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
           data.includes(`topic":"${topic}`)
         ) {
           const json = jsonParse(data);
-          if (json) handler(json);
+          for (const cb of handler) {
+            // eslint-disable-next-line max-depth
+            if (json) cb(json);
+          }
           break;
         }
       }
@@ -142,19 +160,22 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
   listenOHLCV = (opts: OHLCVOptions, callback: (candle: Candle) => void) => {
     const topic = `${reverseSymbol(opts.symbol)}@kline_${opts.interval}`;
 
+    const parser = (json: Data) => {
+      callback({
+        timestamp: json.data.startTime / 1000,
+        open: json.data.open,
+        high: json.data.high,
+        low: json.data.low,
+        close: json.data.close,
+        volume: json.data.volume,
+      });
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers[topic] = (json: Data) => {
-            callback({
-              timestamp: json.data.startTime / 1000,
-              open: json.data.open,
-              high: json.data.high,
-              low: json.data.low,
-              close: json.data.close,
-              volume: json.data.volume,
-            });
-          };
+          this.messageHandlers[topic].push(parser);
+          this.topics[topic] = topic;
 
           const payload = { event: 'subscribe', topic };
           this.ws?.send?.(JSON.stringify(payload));
@@ -167,9 +188,15 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[topic];
+      this.messageHandlers[topic] = [
+        ...this.messageHandlers[topic].filter((f) => f !== parser),
+      ];
 
-      if (this.isConnected) {
+      if (!this.messageHandlers[topic].length) {
+        delete this.topics[topic];
+      }
+
+      if (this.isConnected && !this.messageHandlers[topic].length) {
         const payload = { event: 'unsubscribe', topic };
         this.ws?.send?.(JSON.stringify(payload));
       }
@@ -227,6 +254,26 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
       }
     };
 
+    const parser = (json: Data) => {
+      if (!innerState.isSnapshotLoaded && innerState.updates.length === 0) {
+        fetchSnapshot();
+        innerState.updates = [json];
+        return;
+      }
+
+      if (!innerState.isSnapshotLoaded) {
+        innerState.updates.push(json);
+        return;
+      }
+
+      // do updates
+      this.processOrderBookUpdate(orderBook, json);
+      sortOrderBook(orderBook);
+      calcOrderBookTotal(orderBook);
+
+      callback(orderBook);
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         // 1. subscribe to the topic
@@ -235,28 +282,8 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
         // 4. when the snapshot is received, apply all updates and send the order book to the callback
         // 5. then on each update, apply it to the order book and send it to the callback
         if (!this.isDisposed) {
-          this.messageHandlers[topic] = (json: Data) => {
-            if (
-              !innerState.isSnapshotLoaded &&
-              innerState.updates.length === 0
-            ) {
-              fetchSnapshot();
-              innerState.updates = [json];
-              return;
-            }
-
-            if (!innerState.isSnapshotLoaded) {
-              innerState.updates.push(json);
-              return;
-            }
-
-            // do updates
-            this.processOrderBookUpdate(orderBook, json);
-            sortOrderBook(orderBook);
-            calcOrderBookTotal(orderBook);
-
-            callback(orderBook);
-          };
+          this.messageHandlers[topic].push(parser);
+          this.topics[topic] = topic;
 
           const payload = { event: 'subscribe', topic };
           this.ws?.send?.(JSON.stringify(payload));
@@ -269,7 +296,14 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[topic];
+      this.messageHandlers[topic] = [
+        ...this.messageHandlers[topic].filter((f) => f !== parser),
+      ];
+
+      if (!this.messageHandlers[topic].length) {
+        this.topics[topic] = topic;
+      }
+
       orderBook.asks = [];
       orderBook.bids = [];
       innerState.updates = [];
@@ -280,7 +314,7 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (this.isConnected && !this.messageHandlers[topic].length) {
         const payload = { event: 'unsubscribe', topic };
         this.ws?.send?.(JSON.stringify(payload));
       }

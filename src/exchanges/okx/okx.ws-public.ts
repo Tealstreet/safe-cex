@@ -17,7 +17,7 @@ import { BASE_WS_URL, INTERVAL } from './okx.types';
 
 type Data = Record<string, any>;
 type MessageHandlers = {
-  [channel: string]: (json: Data) => void;
+  [channel: string]: Array<(json: Data) => void>;
 };
 type SubscribedTopics = {
   [id: string]: Array<{ channel: string; instId: string }>;
@@ -26,11 +26,11 @@ type SubscribedTopics = {
 export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
   topics: SubscribedTopics = {};
   messageHandlers: MessageHandlers = {
-    tickers: (d: Data) => this.handleTickerEvents(d),
-    'mark-price': (d: Data) => this.handleMarkPriceEvents(d),
-    'index-tickers': (d: Data) => this.handleIndexTickerEvents(d),
-    'open-interest': (d: Data) => this.handleOpenInterestEvents(d),
-    'funding-rate': (d: Data) => this.handleFundingRateEvents(d),
+    tickers: [(d: Data) => this.handleTickerEvents(d)],
+    'mark-price': [(d: Data) => this.handleMarkPriceEvents(d)],
+    'index-tickers': [(d: Data) => this.handleIndexTickerEvents(d)],
+    'open-interest': [(d: Data) => this.handleOpenInterestEvents(d)],
+    'funding-rate': [(d: Data) => this.handleFundingRateEvents(d)],
   };
 
   connectAndSubscribe = () => {
@@ -97,13 +97,16 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
       }
 
       for (const [channel, handler] of Object.entries(this.messageHandlers)) {
+        const [leftmost] = channel.split('.');
         if (
-          data.includes(`channel":"${channel}`) &&
+          data.includes(`channel":"${leftmost}`) &&
           !data.includes('event":"subscribe"')
         ) {
           const json = jsonParse(data);
-          if (json) handler(json);
-          break;
+          for (const cb of handler) {
+            // eslint-disable-next-line max-depth
+            if (json) cb(json);
+          }
         }
       }
     }
@@ -167,6 +170,8 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
   listenOHLCV = (opts: OHLCVOptions, callback: (candle: Candle) => void) => {
     let timeoutId: NodeJS.Timeout | null = null;
 
+    const handler = `candle.${opts.interval}.${opts.symbol}`;
+
     if (!this.store.loaded.markets) {
       timeoutId = setTimeout(() => this.listenOHLCV(opts, callback), 100);
 
@@ -186,29 +191,34 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
       instId: market.id,
     };
 
+    const parser = (data: Data) => {
+      const candle = data?.data?.[0];
+
+      if (candle) {
+        callback({
+          timestamp: parseInt(candle[0], 10) / 1000,
+          open: parseFloat(candle[1]),
+          high: parseFloat(candle[2]),
+          low: parseFloat(candle[3]),
+          close: parseFloat(candle[4]),
+          volume: parseFloat(candle[7]),
+        });
+      }
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers.candle = (data: Data) => {
-            const candle = data?.data?.[0];
-
-            if (candle) {
-              callback({
-                timestamp: parseInt(candle[0], 10) / 1000,
-                open: parseFloat(candle[1]),
-                high: parseFloat(candle[2]),
-                low: parseFloat(candle[3]),
-                close: parseFloat(candle[4]),
-                volume: parseFloat(candle[7]),
-              });
-            }
-          };
+          this.messageHandlers[handler] = [
+            ...(this.messageHandlers[handler] || []),
+            parser,
+          ];
 
           this.ws?.send?.(JSON.stringify({ op: 'subscribe', args: [topic] }));
           this.parent.log(`Switched to [${opts.symbol}:${opts.interval}]`);
 
           // store the topic so we can unsubscribe later
-          this.topics.candle = [topic];
+          this.topics[handler] = [topic];
         }
       } else {
         timeoutId = setTimeout(() => waitForConnectedAndSubscribe(), 100);
@@ -218,15 +228,20 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.candle;
-      delete this.topics.candle;
+      this.messageHandlers[handler] = [
+        ...this.messageHandlers[handler].filter((f) => f !== parser),
+      ];
+
+      if (!this.messageHandlers[handler].length) {
+        delete this.topics[handler];
+      }
 
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { op: 'unsubscribe', args: [topic] };
         this.ws?.send?.(JSON.stringify(payload));
       }
@@ -238,6 +253,7 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
     callback: (orderBook: OrderBook) => void
   ) => {
     let timeoutId: NodeJS.Timeout | null = null;
+    const handler = `books.${symbol}`;
 
     if (!this.store.loaded.markets) {
       timeoutId = setTimeout(() => this.listenOrderBook(symbol, callback), 100);
@@ -257,92 +273,90 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
     const orderBook: OrderBook = { bids: [], asks: [] };
     const topic = { channel: 'books', instId: market.id };
 
+    const parser = (data: Data) => {
+      if (data.action === 'snapshot') {
+        const {
+          data: [snapshot],
+        } = data;
+
+        sides.forEach((side) => {
+          orderBook[side] = snapshot[side].reduce(
+            (acc: OrderBookOrders[], [price, amount]: string[]) => {
+              if (parseFloat(amount) === 0) return acc;
+              return [
+                ...acc,
+                {
+                  price: parseFloat(price),
+                  amount: multiply(parseFloat(amount), market.precision.amount),
+                },
+              ];
+            },
+            []
+          );
+        });
+      }
+
+      if (data.action === 'update') {
+        const {
+          data: [update],
+        } = data;
+
+        sides.forEach((side) => {
+          for (const [rPrice, rAmount] of update[side]) {
+            const price = parseFloat(rPrice);
+            const amount = parseFloat(rAmount);
+
+            const index = orderBook[side].findIndex((b) => b.price === price);
+
+            if (amount === 0 && index !== -1) {
+              orderBook[side].splice(index, 1);
+              return;
+            }
+
+            if (amount !== 0) {
+              if (index === -1) {
+                orderBook[side].push({
+                  price,
+                  amount: multiply(amount, market.precision.amount),
+                  total: 0,
+                });
+                return;
+              }
+
+              orderBook[side][index].amount = multiply(
+                amount,
+                market.precision.amount
+              );
+            }
+          }
+        });
+      }
+
+      const ticker = this.store.tickers.find((t) => t.symbol === market.symbol);
+
+      const lastPrice = ticker?.last || 0;
+      orderBook.asks = orderBook.asks.filter((a) => a.price >= lastPrice);
+      orderBook.bids = orderBook.bids.filter((b) => b.price <= lastPrice);
+
+      sortOrderBook(orderBook);
+      calcOrderBookTotal(orderBook);
+
+      callback(orderBook);
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers.books = (data: Data) => {
-            if (data.action === 'snapshot') {
-              const {
-                data: [snapshot],
-              } = data;
-
-              sides.forEach((side) => {
-                orderBook[side] = snapshot[side].reduce(
-                  (acc: OrderBookOrders[], [price, amount]: string[]) => {
-                    if (parseFloat(amount) === 0) return acc;
-                    return [
-                      ...acc,
-                      {
-                        price: parseFloat(price),
-                        amount: multiply(
-                          parseFloat(amount),
-                          market.precision.amount
-                        ),
-                      },
-                    ];
-                  },
-                  []
-                );
-              });
-            }
-
-            if (data.action === 'update') {
-              const {
-                data: [update],
-              } = data;
-
-              sides.forEach((side) => {
-                for (const [rPrice, rAmount] of update[side]) {
-                  const price = parseFloat(rPrice);
-                  const amount = parseFloat(rAmount);
-
-                  const index = orderBook[side].findIndex(
-                    (b) => b.price === price
-                  );
-
-                  if (amount === 0 && index !== -1) {
-                    orderBook[side].splice(index, 1);
-                    return;
-                  }
-
-                  if (amount !== 0) {
-                    if (index === -1) {
-                      orderBook[side].push({
-                        price,
-                        amount: multiply(amount, market.precision.amount),
-                        total: 0,
-                      });
-                      return;
-                    }
-
-                    orderBook[side][index].amount = multiply(
-                      amount,
-                      market.precision.amount
-                    );
-                  }
-                }
-              });
-            }
-
-            const ticker = this.store.tickers.find(
-              (t) => t.symbol === market.symbol
-            );
-
-            const lastPrice = ticker?.last || 0;
-            orderBook.asks = orderBook.asks.filter((a) => a.price >= lastPrice);
-            orderBook.bids = orderBook.bids.filter((b) => b.price <= lastPrice);
-
-            sortOrderBook(orderBook);
-            calcOrderBookTotal(orderBook);
-
-            callback(orderBook);
-          };
+          this.messageHandlers[handler] = [
+            ...(this.messageHandlers[handler] || []),
+            parser,
+          ];
 
           const payload = JSON.stringify({ op: 'subscribe', args: [topic] });
           this.ws?.send?.(payload);
 
           // store subscribed topic to re-subscribe on reconnect
-          this.topics.orderBook = [topic];
+          this.topics[handler] = [topic];
         }
       } else {
         timeoutId = setTimeout(() => waitForConnectedAndSubscribe(), 100);
@@ -352,8 +366,15 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.books;
-      delete this.topics.orderBook;
+      this.messageHandlers[handler] = [
+        ...(this.messageHandlers[handler] || []),
+        parser,
+      ];
+
+      if (!this.messageHandlers[handler].length) {
+        delete this.topics[handler];
+      }
+
       orderBook.bids = [];
       orderBook.asks = [];
 
@@ -362,7 +383,7 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { op: 'unsubscribe', args: [topic] };
         this.ws?.send?.(JSON.stringify(payload));
       }

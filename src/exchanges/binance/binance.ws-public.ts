@@ -9,15 +9,17 @@ import { BASE_WS_URL, ENDPOINTS } from './binance.types';
 
 type Data = Array<Record<string, any>>;
 type MessageHandlers = {
-  [topic: string]: (json: Data) => void;
+  [topic: string]: Array<(json: Data) => void>;
 };
 
 export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
   messageHandlers: MessageHandlers = {
-    '24hrTicker': (d: Data) => this.handleTickerStreamEvents(d),
-    bookTicker: (d: Data) => this.handleBookTickersStreamEvents(d),
-    markPriceUpdate: (d: Data) => this.handleMarkPriceStreamEvents(d),
+    '24hrTicker': [(d: Data) => this.handleTickerStreamEvents(d)],
+    bookTicker: [(d: Data) => this.handleBookTickersStreamEvents(d)],
+    markPriceUpdate: [(d: Data) => this.handleMarkPriceStreamEvents(d)],
   };
+
+  topics: { [key: string]: number } = {};
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
@@ -41,17 +43,31 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
 
       this.ws?.send?.(JSON.stringify(payload));
     }
+
+    this.subscribe();
+  };
+
+  subscribe = () => {
+    let id = 10;
+    for (const topic of Object.keys(this.topics)) {
+      this.ws?.send?.(
+        JSON.stringify({ method: 'SUBSCRIBE', params: [topic], id: id++ })
+      );
+    }
   };
 
   onMessage = ({ data }: MessageEvent) => {
     if (!this.isDisposed) {
       const handlers = Object.entries(this.messageHandlers);
 
-      for (const [topic, handler] of handlers) {
+      for (const [topic, callbacks] of handlers) {
         const [leftmost] = topic.split('.');
         if (data.includes(`e":"${leftmost}`)) {
           const json = jsonParse(data);
-          if (json) handler(Array.isArray(json) ? json : [json]);
+          for (const callback of callbacks) {
+            // eslint-disable-next-line max-depth
+            if (json) callback(Array.isArray(json) ? json : [json]);
+          }
         }
       }
     }
@@ -109,20 +125,27 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     const topic = `${opts.symbol.toLowerCase()}@kline_${opts.interval}`;
     const handler = `kline.${opts.interval}.${opts.symbol}`;
 
+    const parser = ([json]: Data) => {
+      if (opts.symbol === json.k.s && json.k.i === opts.interval) {
+        callback({
+          timestamp: json.k.t / 1000,
+          open: parseFloat(json.k.o),
+          high: parseFloat(json.k.h),
+          low: parseFloat(json.k.l),
+          close: parseFloat(json.k.c),
+          volume: parseFloat(json.k.v),
+        });
+      }
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
-        this.messageHandlers[handler] = ([json]: Data) => {
-          if (opts.symbol === json.k.s && json.k.i === opts.interval) {
-            callback({
-              timestamp: json.k.t / 1000,
-              open: parseFloat(json.k.o),
-              high: parseFloat(json.k.h),
-              low: parseFloat(json.k.l),
-              close: parseFloat(json.k.c),
-              volume: parseFloat(json.k.v),
-            });
-          }
-        };
+        this.messageHandlers[handler] = [
+          ...(this.messageHandlers[handler] || []),
+          parser,
+        ];
+
+        this.topics[topic] = (this.topics[topic] || 0) + 1;
 
         const payload = { method: 'SUBSCRIBE', params: [topic], id: 2 };
         this.ws?.send?.(JSON.stringify(payload));
@@ -135,9 +158,13 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[handler];
+      this.messageHandlers[handler] = [
+        ...this.messageHandlers[handler].filter((f) => f !== parser),
+      ];
 
-      if (this.isConnected) {
+      this.topics[topic]--;
+
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { method: 'UNSUBSCRIBE', params: [topic], id: 2 };
         this.ws?.send?.(JSON.stringify(payload));
       }
@@ -197,6 +224,31 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
       }
     };
 
+    const parser = ([data]: Data) => {
+      // incorrect symbol, we don't take account
+      if (data.s !== symbol) return;
+
+      // first update, request snapshot
+      if (!innerState.isSnapshotLoaded && innerState.updates.length === 0) {
+        fetchSnapshot();
+        innerState.updates = [data];
+        return;
+      }
+
+      // more updates, but snapshot is not loaded yet
+      if (!innerState.isSnapshotLoaded) {
+        innerState.updates.push(data);
+        return;
+      }
+
+      // snapshot is loaded, apply updates and callback
+      this.processOrderBookUpdate(orderBook, data);
+      sortOrderBook(orderBook);
+      calcOrderBookTotal(orderBook);
+
+      callback(orderBook);
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         // 1. subscribe to the topic
@@ -204,30 +256,12 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
         // 3. store all incoming updates in an array
         // 4. when the snapshot is received, apply all updates and send the order book to the callback
         // 5. then on each update, apply it to the order book and send it to the callback
-        this.messageHandlers[handler] = ([data]: Data) => {
-          // incorrect symbol, we don't take account
-          if (data.s !== symbol) return;
+        this.messageHandlers[handler] = [
+          ...(this.messageHandlers[handler] || []),
+          parser,
+        ];
 
-          // first update, request snapshot
-          if (!innerState.isSnapshotLoaded && innerState.updates.length === 0) {
-            fetchSnapshot();
-            innerState.updates = [data];
-            return;
-          }
-
-          // more updates, but snapshot is not loaded yet
-          if (!innerState.isSnapshotLoaded) {
-            innerState.updates.push(data);
-            return;
-          }
-
-          // snapshot is loaded, apply updates and callback
-          this.processOrderBookUpdate(orderBook, data);
-          sortOrderBook(orderBook);
-          calcOrderBookTotal(orderBook);
-
-          callback(orderBook);
-        };
+        this.topics[topic] = (this.topics[topic] || 0) + 1;
 
         const payload = { method: 'SUBSCRIBE', params: [topic], id: 3 };
         this.ws?.send?.(JSON.stringify(payload));
@@ -239,7 +273,9 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[handler];
+      this.messageHandlers[handler] = [
+        ...this.messageHandlers[handler].filter((f) => f !== parser),
+      ];
       orderBook.asks = [];
       orderBook.bids = [];
       innerState.updates = [];
@@ -250,7 +286,9 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      this.topics[topic]--;
+
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { method: 'UNSUBSCRIBE', params: [topic], id: 3 };
         this.ws?.send?.(JSON.stringify(payload));
       }

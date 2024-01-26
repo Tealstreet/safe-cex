@@ -14,11 +14,11 @@ import { BASE_WS_URL, INTERVAL } from './bitget.types';
 
 type Data = Record<string, any>;
 type MessageHandlers = {
-  [topic: string]: (json: Data) => void;
+  [topic: string]: Array<(json: Data) => void>;
 };
 
 type SubscribedTopics = {
-  [id: string]: string[];
+  [id: string]: { [instId: string]: number };
 };
 
 export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
@@ -27,7 +27,13 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.topics.ticker = this.parent.store.markets.map((m) => m.symbol);
+      this.topics.ticker = this.parent.store.markets.reduce(
+        (acc, m) => ({
+          ...acc,
+          [m.symbol]: 1,
+        }),
+        {}
+      );
 
       this.ws = new WebSocket(BASE_WS_URL);
       this.ws.addEventListener('open', this.onOpen);
@@ -52,7 +58,11 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
 
   subscribe = () => {
     const args = Object.entries(this.topics).flatMap(([channel, symbols]) =>
-      symbols.map((instId) => ({ instType: 'mc', channel, instId }))
+      Object.keys(symbols).map((instId) => ({
+        instType: 'mc',
+        channel,
+        instId,
+      }))
     );
 
     this.ws?.send?.(JSON.stringify({ op: 'subscribe', args }));
@@ -85,8 +95,10 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
           const topic = `candle_${json.arg.instId}_${interval}`;
 
           if (this.messageHandlers[topic]) {
-            this.messageHandlers[topic](json);
-            return;
+            // eslint-disable-next-line max-depth
+            for (const cb of this.messageHandlers[topic]) {
+              cb(json);
+            }
           }
         }
       }
@@ -98,7 +110,10 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
           const topic = `orderBook_${json.arg.instId}`;
 
           if (this.messageHandlers[topic]) {
-            this.messageHandlers[topic](json);
+            // eslint-disable-next-line max-depth
+            for (const cb of this.messageHandlers[topic]) {
+              cb(json);
+            }
           }
         }
       }
@@ -142,32 +157,41 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
   listenOHLCV = (opts: OHLCVOptions, callback: (candle: Candle) => void) => {
     const interval = INTERVAL[opts.interval];
     const topic = `candle_${opts.symbol}_${interval}`;
+    const channel = `candle${interval}`;
+
+    const parser = ({ data: [c] }: Data) => {
+      const candle: Candle = {
+        timestamp: parseInt(c[0], 10) / 1000,
+        open: parseFloat(c[1]),
+        high: parseFloat(c[2]),
+        low: parseFloat(c[3]),
+        close: parseFloat(c[4]),
+        volume: parseFloat(c[6]),
+      };
+      callback(candle);
+    };
 
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers[topic] = ({ data: [c] }: Data) => {
-            const candle: Candle = {
-              timestamp: parseInt(c[0], 10) / 1000,
-              open: parseFloat(c[1]),
-              high: parseFloat(c[2]),
-              low: parseFloat(c[3]),
-              close: parseFloat(c[4]),
-              volume: parseFloat(c[6]),
-            };
-            callback(candle);
-          };
+          this.messageHandlers[topic] = [
+            ...(this.messageHandlers[topic] || []),
+            parser,
+          ];
 
           const payload = {
             op: 'subscribe',
             args: [
               {
                 instType: 'mc',
-                channel: `candle${interval}`,
+                channel,
                 instId: opts.symbol,
               },
             ],
           };
+
+          this.topics[channel][opts.symbol] =
+            (this.topics[channel][opts.symbol] || 0) + 1;
 
           this.ws?.send?.(JSON.stringify(payload));
           this.parent.log(`Switched to [${opts.symbol}:${opts.interval}]`);
@@ -180,9 +204,13 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[topic];
+      this.messageHandlers[topic] = [
+        ...this.messageHandlers[topic].filter((f) => f !== parser),
+      ];
 
-      if (this.isConnected) {
+      this.topics[channel][opts.symbol]--;
+
+      if (this.isConnected && this.topics[channel][opts.symbol] <= 0) {
         this.ws?.send?.(
           JSON.stringify({
             op: 'unsubscribe',
@@ -207,71 +235,78 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
 
     const keys = ['bids', 'asks'] as const;
     const orderBook: OrderBook = { bids: [], asks: [] };
+    const channel = 'books';
 
     const topic = `orderBook_${symbol}`;
+
+    const parser = (data: Data) => {
+      if (data.action === 'snapshot') {
+        orderBook.bids = [];
+        orderBook.asks = [];
+
+        keys.forEach((key) => {
+          data.data[0][key].forEach((o: string[]) => {
+            orderBook[key].push({
+              price: parseFloat(o[0]),
+              amount: parseFloat(o[1]),
+              total: 0,
+            });
+          });
+        });
+      }
+
+      if (data.action === 'update') {
+        keys.forEach((key) => {
+          data.data[0][key].forEach((o: string[]) => {
+            const price = parseFloat(o[0]);
+            const amount = parseFloat(o[1]);
+
+            const index = orderBook[key].findIndex((b) => b.price === price);
+
+            if (amount === 0 && index !== -1) {
+              orderBook[key].splice(index, 1);
+              return;
+            }
+
+            if (amount !== 0) {
+              if (index === -1) {
+                orderBook[key].push({ price, amount, total: 0 });
+                return;
+              }
+
+              orderBook[key][index].amount = amount;
+            }
+          });
+        });
+      }
+
+      sortOrderBook(orderBook);
+      calcOrderBookTotal(orderBook);
+
+      callback(orderBook);
+    };
 
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers[topic] = (data: Data) => {
-            if (data.action === 'snapshot') {
-              orderBook.bids = [];
-              orderBook.asks = [];
-
-              keys.forEach((key) => {
-                data.data[0][key].forEach((o: string[]) => {
-                  orderBook[key].push({
-                    price: parseFloat(o[0]),
-                    amount: parseFloat(o[1]),
-                    total: 0,
-                  });
-                });
-              });
-            }
-
-            if (data.action === 'update') {
-              keys.forEach((key) => {
-                data.data[0][key].forEach((o: string[]) => {
-                  const price = parseFloat(o[0]);
-                  const amount = parseFloat(o[1]);
-
-                  const index = orderBook[key].findIndex(
-                    (b) => b.price === price
-                  );
-
-                  if (amount === 0 && index !== -1) {
-                    orderBook[key].splice(index, 1);
-                    return;
-                  }
-
-                  if (amount !== 0) {
-                    if (index === -1) {
-                      orderBook[key].push({ price, amount, total: 0 });
-                      return;
-                    }
-
-                    orderBook[key][index].amount = amount;
-                  }
-                });
-              });
-            }
-
-            sortOrderBook(orderBook);
-            calcOrderBookTotal(orderBook);
-
-            callback(orderBook);
-          };
+          this.messageHandlers[topic] = [
+            ...(this.messageHandlers[topic] || []),
+            parser,
+          ];
 
           const payload = {
             op: 'subscribe',
             args: [
               {
                 instType: 'mc',
-                channel: 'books',
+                channel,
                 instId: symbol,
               },
             ],
           };
+
+          this.topics[channel][symbol] =
+            (this.topics[channel][symbol] || 0) + 1;
 
           this.ws?.send?.(JSON.stringify(payload));
         }
@@ -283,7 +318,9 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers[topic];
+      this.messageHandlers[topic] = [
+        ...this.messageHandlers[topic].filter((f) => f !== parser),
+      ];
 
       orderBook.asks = [];
       orderBook.bids = [];
@@ -293,7 +330,7 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (this.isConnected && this.topics[channel][symbol] <= 0) {
         const payload = {
           op: 'unsubscribe',
           args: [

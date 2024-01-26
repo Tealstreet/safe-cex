@@ -14,13 +14,13 @@ type SubscribedTopics = {
 
 type Data = Record<string, any>;
 type MessageHandlers = {
-  [channel: string]: (json: Data) => void;
+  [channel: string]: Array<(json: Data) => void>;
 };
 
 export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
   topics: SubscribedTopics = {};
   messageHandlers: MessageHandlers = {
-    tickers: (d: Data) => this.handleTickerEvents(d),
+    tickers: [(d: Data) => this.handleTickerEvents(d)],
   };
 
   get time() {
@@ -79,12 +79,16 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
       }
 
       for (const [channel, handler] of Object.entries(this.messageHandlers)) {
+        const [leftmost] = channel.split('.');
         if (
-          data.includes(`"channel":"futures.${channel}"`) &&
+          data.includes(`"channel":"futures.${leftmost}"`) &&
           data.includes(`"event":"update"`)
         ) {
           const json = jsonParse(data);
-          if (json) handler(json);
+          for (const cb of handler) {
+            // eslint-disable-next-line max-depth
+            if (json) cb(json);
+          }
           break;
         }
       }
@@ -107,25 +111,33 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
 
   listenOHLCV = (opts: OHLCVOptions, callback: (candle: Candle) => void) => {
     let timeoutId: NodeJS.Timeout | null = null;
+    const handler = `candlesticks.${opts.interval}.${opts.symbol}`;
 
     const topic = {
       channel: 'futures.candlesticks',
       payload: [opts.interval, opts.symbol.replace(/USDT$/, '_USDT')],
     };
 
+    const parser = ({ result: [c] }: Data) => {
+      callback({
+        timestamp: c.t,
+        open: parseFloat(c.o),
+        high: parseFloat(c.h),
+        low: parseFloat(c.l),
+        close: parseFloat(c.c),
+        volume: parseFloat(c.v),
+      });
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers.candlesticks = ({ result: [c] }: Data) => {
-            callback({
-              timestamp: c.t,
-              open: parseFloat(c.o),
-              high: parseFloat(c.h),
-              low: parseFloat(c.l),
-              close: parseFloat(c.c),
-              volume: parseFloat(c.v),
-            });
-          };
+          this.messageHandlers[handler] = [
+            ...(this.messageHandlers[handler] || []),
+            parser,
+          ];
+
+          this.topics[handler] = topic;
 
           const payload = { ...topic, event: 'subscribe', time: this.time };
           this.ws?.send?.(JSON.stringify(payload));
@@ -138,15 +150,20 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.candlesticks;
-      delete this.topics.candlesticks;
+      this.messageHandlers[handler] = [
+        ...this.messageHandlers[handler].filter((f) => f !== parser),
+      ];
 
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (!this.messageHandlers[handler].length) {
+        delete this.topics[handler];
+      }
+
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { ...topic, time: this.time, event: 'unsubscribe' };
         this.ws?.send(JSON.stringify(payload));
       }
@@ -158,6 +175,8 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
     callback: (orderBook: OrderBook) => void
   ) => {
     let timeoutId: NodeJS.Timeout | null = null;
+
+    const handler = `order_book_update.${symbol}`;
 
     if (!this.store.loaded.markets) {
       timeoutId = setTimeout(() => this.listenOrderBook(symbol, callback), 100);
@@ -184,44 +203,49 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
       payload: [market.id, '100ms', '100'],
     };
 
+    const parser = ({ result }: Data) => {
+      sides.forEach(([k1, k2]) => {
+        for (const a of result[k1]) {
+          const price = parseFloat(a.p);
+          const amount = multiply(a.s, market.precision.amount);
+
+          const index = orderBook[k2].findIndex((ask) => ask.price === price);
+
+          if (amount === 0 && index !== -1) {
+            orderBook[k2].splice(index, 1);
+            return;
+          }
+
+          if (amount !== 0) {
+            if (index === -1) {
+              orderBook[k2].push({
+                price,
+                amount,
+                total: 0,
+              });
+              return;
+            }
+
+            orderBook[k2][index].amount = amount;
+          }
+        }
+      });
+
+      sortOrderBook(orderBook);
+      calcOrderBookTotal(orderBook);
+
+      callback(orderBook);
+    };
+
     const waitForConnectedAndSubscribe = () => {
       if (this.isConnected) {
         if (!this.isDisposed) {
-          this.messageHandlers.order_book_update = ({ result }: Data) => {
-            sides.forEach(([k1, k2]) => {
-              for (const a of result[k1]) {
-                const price = parseFloat(a.p);
-                const amount = multiply(a.s, market.precision.amount);
+          this.messageHandlers[handler] = [
+            ...(this.messageHandlers[handler] || []),
+            parser,
+          ];
 
-                const index = orderBook[k2].findIndex(
-                  (ask) => ask.price === price
-                );
-
-                if (amount === 0 && index !== -1) {
-                  orderBook[k2].splice(index, 1);
-                  return;
-                }
-
-                if (amount !== 0) {
-                  if (index === -1) {
-                    orderBook[k2].push({
-                      price,
-                      amount,
-                      total: 0,
-                    });
-                    return;
-                  }
-
-                  orderBook[k2][index].amount = amount;
-                }
-              }
-            });
-
-            sortOrderBook(orderBook);
-            calcOrderBookTotal(orderBook);
-
-            callback(orderBook);
-          };
+          this.topics[handler] = topic;
 
           const payload = { ...topic, event: 'subscribe', time: this.time };
           this.ws?.send?.(JSON.stringify(payload));
@@ -234,7 +258,14 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
     waitForConnectedAndSubscribe();
 
     return () => {
-      delete this.messageHandlers.order_book_update;
+      this.messageHandlers[handler] = [
+        ...this.messageHandlers[handler].filter((f) => f !== parser),
+      ];
+
+      if (!this.messageHandlers[handler].length) {
+        delete this.topics[handler];
+      }
+
       orderBook.bids = [];
       orderBook.asks = [];
 
@@ -243,7 +274,7 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
         timeoutId = null;
       }
 
-      if (this.isConnected) {
+      if (this.isConnected && !this.messageHandlers[handler].length) {
         const payload = { ...topic, time: this.time, event: 'unsubscribe' };
         this.ws?.send(JSON.stringify(payload));
       }
