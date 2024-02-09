@@ -13,18 +13,18 @@ import type {
   Candle,
   ExchangeOptions,
   Market,
+  OHLCVOptions,
+  Order,
+  OrderBook,
+  PlaceOrderOpts,
   Position,
   Ticker,
-  Order,
-  PlaceOrderOpts,
-  OHLCVOptions,
   UpdateOrderOpts,
-  OrderBook,
 } from '../../types';
 import {
+  OrderSide,
   OrderTimeInForce,
   OrderType,
-  OrderSide,
   PositionSide,
 } from '../../types';
 import { v } from '../../utils/get-key';
@@ -522,10 +522,26 @@ export class BybitExchange extends BaseExchange {
     return this.publicWebsocket.listenOrderBook(symbol, callback);
   };
 
+  _hasPositionOppositeSide = (symbol: string, side: OrderSide) => {
+    return side === OrderSide.Buy
+      ? this.store.positions.some(
+          (p) =>
+            p.symbol === symbol &&
+            p.side === PositionSide.Short &&
+            p.contracts !== 0
+        )
+      : this.store.positions.some(
+          (p) =>
+            p.symbol === symbol &&
+            p.side === PositionSide.Long &&
+            p.contracts !== 0
+        );
+  };
+
   placeOrder = async (opts: PlaceOrderOpts) => {
     if (
-      opts.type === OrderType.StopLoss ||
-      opts.type === OrderType.TakeProfit
+      this._hasPositionOppositeSide(opts.symbol, opts.side) &&
+      (opts.type === OrderType.StopLoss || opts.type === OrderType.TakeProfit)
     ) {
       return this.placeStopLossOrTakeProfit(opts);
     }
@@ -557,17 +573,42 @@ export class BybitExchange extends BaseExchange {
       inverseObj(ORDER_TIME_IN_FORCE)[
         opts.timeInForce || OrderTimeInForce.GoodTillCancel
       ];
+    const triggerPrice = opts.triggerPrice
+      ? adjust(opts.triggerPrice, pPrice)
+      : null;
+
+    let triggerDirection: number | undefined = undefined;
+    if (triggerPrice) {
+      const ticker = this.store.tickers.find(
+        ({ symbol }) => symbol === opts.symbol
+      )!;
+      if (triggerPrice > ticker.mark) {
+        triggerDirection = 1;
+      } else {
+        triggerDirection = 2;
+      }
+    }
+
+    let type = opts.type;
+    if (
+      triggerPrice &&
+      (opts.type === OrderType.StopLoss || opts.type === OrderType.TakeProfit)
+    ) {
+      type = OrderType.Market;
+    }
 
     const req = omitUndefined({
       category: this.accountCategory,
       symbol: opts.symbol,
       side: inverseObj(ORDER_SIDE)[opts.side],
-      orderType: inverseObj(ORDER_TYPE)[opts.type],
+      orderType: inverseObj(ORDER_TYPE)[type],
       qty: `${amount}`,
       price: opts.type === OrderType.Limit ? `${price}` : undefined,
       stopLoss: opts.stopLoss ? `${stopLoss}` : undefined,
       takeProfit: opts.takeProfit ? `${takeProfit}` : undefined,
       reduceOnly: opts.reduceOnly || false,
+      triggerPrice: opts.triggerPrice ? `${triggerPrice}` : undefined,
+      triggerDirection: triggerDirection ? `${triggerDirection}` : undefined,
       slTriggerBy: opts.stopLoss ? 'MarkPrice' : undefined,
       tpTriggerBy: opts.takeProfit ? 'LastPrice' : undefined,
       timeInForce: opts.type === OrderType.Limit ? timeInForce : undefined,
@@ -803,7 +844,10 @@ export class BybitExchange extends BaseExchange {
 
     const { data } = await this.unlimitedXHR.post(
       ENDPOINTS.CANCEL_SYMBOL_ORDERS,
-      { category: this.accountCategory, symbol }
+      {
+        category: this.accountCategory,
+        symbol,
+      }
     );
 
     // we need to re-create TP/SL after cancel all

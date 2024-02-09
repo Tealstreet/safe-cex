@@ -3,6 +3,7 @@ import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
 import { multiply } from '../../utils/safe-math';
 import { virtualClock } from '../../utils/virtual-clock';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { GateExchange } from './gate.exchange';
@@ -29,7 +30,7 @@ export class GatePublicWebsocket extends BaseWebSocket<GateExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 

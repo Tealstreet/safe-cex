@@ -1,5 +1,6 @@
 import { OrderStatus } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BinanceExchange } from './binance.exchange';
@@ -21,7 +22,7 @@ export class BinancePrivateWebsocket extends BaseWebSocket<BinanceExchange> {
 
       const url = `${base}/${listenKey}`;
 
-      this.ws = new WebSocket(url);
+      this.ws = new WebsocketWorker(url);
       this.ws.addEventListener('message', this.onMessage);
       this.ws.addEventListener('close', this.onClose);
       this.ws.addEventListener('open', this.onOpen);

@@ -72,7 +72,6 @@ export class BaseExchange implements Exchange {
 
   getAccount = async () => {
     await Promise.reject(new Error('Not implemented'));
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     return {} as ExchangeAccount;
   };
 

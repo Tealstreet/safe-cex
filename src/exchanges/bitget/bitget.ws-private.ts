@@ -2,6 +2,7 @@ import createHmac from 'create-hmac';
 
 import { jsonParse } from '../../utils/json-parse';
 import { virtualClock } from '../../utils/virtual-clock';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BitgetExchange } from './bitget.exchange';
@@ -10,7 +11,7 @@ import { BASE_WS_URL } from './bitget.types';
 export class BitgetPrivateWebsocket extends BaseWebSocket<BitgetExchange> {
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(BASE_WS_URL);
+      this.ws = new WebsocketWorker(BASE_WS_URL);
       this.ws.addEventListener('open', this.onOpen);
       this.ws.addEventListener('message', this.onMessage);
       this.ws.addEventListener('close', this.onClose);

@@ -3,6 +3,7 @@ import createHmac from 'create-hmac';
 import type { Position } from '../../types';
 import { v } from '../../utils/get-key';
 import { jsonParse } from '../../utils/json-parse';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BybitExchange } from './bybit.exchange';
@@ -11,7 +12,7 @@ import { BASE_WS_URL } from './bybit.types';
 export class BybitPrivateWebsocket extends BaseWebSocket<BybitExchange> {
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL.private[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 

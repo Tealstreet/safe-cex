@@ -3,6 +3,7 @@ import createHmac from 'create-hmac';
 import { v } from '../../utils/get-key';
 import { jsonParse } from '../../utils/json-parse';
 import { virtualClock } from '../../utils/virtual-clock';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { WOOXExchange } from './woo.exchange';
@@ -17,7 +18,9 @@ export class WooPrivateWebscoket extends BaseWebSocket<WOOXExchange> {
           this.parent.options.testnet ? 'testnet' : 'livenet'
         ];
 
-      this.ws = new WebSocket(`${baseURL}${this.parent.options.applicationId}`);
+      this.ws = new WebsocketWorker(
+        `${baseURL}${this.parent.options.applicationId}`
+      );
 
       this.ws.addEventListener('open', this.onOpen);
       this.ws.addEventListener('message', this.onMessage);

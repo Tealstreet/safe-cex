@@ -251,7 +251,9 @@ export class OKXExchange extends BaseExchange {
         data: { data: pData },
       } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
         ENDPOINTS.POSITIONS,
-        { params: { instType: 'SWAP' } }
+        {
+          params: { instType: 'SWAP' },
+        }
       );
 
       const totalCollateral = roundUSD(sumBy(bal, (b) => parseFloat(b.disEq)));

@@ -201,7 +201,7 @@ export class BinanceExchange extends BaseExchange {
         .filter(
           (m) =>
             v(m, 'contractType') === 'PERPETUAL' &&
-            v(m, 'marginAsset') === 'USDT'
+            ['USDT', 'USDC'].includes(v(m, 'marginAsset'))
         )
         .map((m) => {
           const p = m.filters.find(

@@ -9,6 +9,7 @@ import type {
 } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BybitExchange } from './bybit.exchange';
@@ -37,7 +38,7 @@ export class BybitPublicWebsocket extends BaseWebSocket<BybitExchange> {
         (m) => `tickers.${m.symbol}`
       );
 
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL.public[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 

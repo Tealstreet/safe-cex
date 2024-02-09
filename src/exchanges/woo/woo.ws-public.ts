@@ -3,6 +3,7 @@ import { flatten } from 'lodash';
 import type { OHLCVOptions, Candle, OrderBook } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { WOOXExchange } from './woo.exchange';
@@ -32,7 +33,9 @@ export class WooPublicWebsocket extends BaseWebSocket<WOOXExchange> {
       const baseURL =
         BASE_WS_URL.public[this.parent.options.testnet ? 'testnet' : 'livenet'];
 
-      this.ws = new WebSocket(`${baseURL}${this.parent.options.applicationId}`);
+      this.ws = new WebsocketWorker(
+        `${baseURL}${this.parent.options.applicationId}`
+      );
 
       this.ws.addEventListener('open', this.onOpen);
       this.ws.addEventListener('message', this.onMessage);

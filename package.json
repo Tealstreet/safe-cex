@@ -21,6 +21,7 @@
     "@types/create-hash": "^1.2.2",
     "@types/create-hmac": "^1.1.0",
     "@types/lodash": "^4.14.191",
+    "@types/pako": "^2.0.3",
     "@types/qs": "^6.9.7",
     "@typescript-eslint/eslint-plugin": "^5.50.0",
     "@typescript-eslint/parser": "^5.50.0",
@@ -45,6 +46,7 @@
     "lodash": "^4.17.21",
     "nanoid": "~3.3.5",
     "p-iteration": "^1.1.8",
+    "pako": "^2.1.0",
     "qs": "^6.11.0",
     "tiny-emitter": "^2.1.0"
   }

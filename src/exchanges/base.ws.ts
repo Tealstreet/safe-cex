@@ -1,9 +1,10 @@
 import { LogSeverity } from '../types';
+import type { Handler, WebsocketWorker } from '../ws/WebsocketWorker';
 
 import type { BaseExchange } from './base';
 
 export class BaseWebSocket<T extends BaseExchange> {
-  ws?: WebSocket;
+  ws?: WebsocketWorker;
   parent: T;
 
   pingAt = 0;
@@ -55,7 +56,7 @@ export class BaseWebSocket<T extends BaseExchange> {
     }
 
     this.ws?.removeEventListener?.('open', this.onOpen);
-    this.ws?.removeEventListener?.('message', this.onMessage);
+    this.ws?.removeEventListener?.('message', this.onMessage as Handler);
     this.ws?.removeEventListener?.('close', this.onClose);
     this.ws = undefined;
 

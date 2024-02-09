@@ -29,11 +29,18 @@ export interface Store {
   updateMarket: (market: Pick<Market, 'id'>, changes: Partial<Market>) => void;
 
   get latency(): StoreData['latency'];
+
   get balance(): StoreData['balance'];
+
   get markets(): StoreData['markets'];
+
   get tickers(): StoreData['tickers'];
+
   get orders(): StoreData['orders'];
+
   get positions(): StoreData['positions'];
+
   get loaded(): StoreData['loaded'];
+
   get options(): StoreData['options'];
 }

@@ -10,7 +10,7 @@ import type { Store } from './store/store.interface';
 import type { ExchangeName, ExchangeOptions } from './types';
 import { virtualClock } from './utils/virtual-clock';
 
-const exchanges: Record<ExchangeName, typeof BaseExchange> = {
+export const exchanges: Record<ExchangeName, typeof BaseExchange> = {
   bybit: BybitExchange,
   binance: BinanceExchange,
   woo: WOOXExchange,

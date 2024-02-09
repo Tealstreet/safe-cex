@@ -7,6 +7,7 @@ import type {
 } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BitgetExchange } from './bitget.exchange';
@@ -35,7 +36,7 @@ export class BitgetPublicWebsocket extends BaseWebSocket<BitgetExchange> {
         {}
       );
 
-      this.ws = new WebSocket(BASE_WS_URL);
+      this.ws = new WebsocketWorker(BASE_WS_URL);
       this.ws.addEventListener('open', this.onOpen);
       this.ws.addEventListener('message', this.onMessage);
       this.ws.addEventListener('close', this.onClose);

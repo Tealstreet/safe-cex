@@ -184,7 +184,9 @@ export class BitgetExchange extends BaseExchange {
       data: { data },
     } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
       ENDPOINTS.BALANCE,
-      { params: { productType: this.apiProductType } }
+      {
+        params: { productType: this.apiProductType },
+      }
     );
 
     const usdt = data.find((b) => b.marginCoin === this.apiMarginCoin);
@@ -275,7 +277,9 @@ export class BitgetExchange extends BaseExchange {
       data: { data },
     } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
       ENDPOINTS.MARKETS,
-      { params: { productType: this.apiProductType } }
+      {
+        params: { productType: this.apiProductType },
+      }
     );
 
     const markets: Market[] = data
@@ -442,7 +446,9 @@ export class BitgetExchange extends BaseExchange {
       data: { data },
     } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
       ENDPOINTS.ORDERS,
-      { params: { productType: this.apiProductType } }
+      {
+        params: { productType: this.apiProductType },
+      }
     );
 
     return data.map(this.mapOrder);
@@ -453,7 +459,9 @@ export class BitgetExchange extends BaseExchange {
       data: { data },
     } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
       ENDPOINTS.ALGO_ORDERS,
-      { params: { productType: this.apiProductType, isPlan: 'profit_loss' } }
+      {
+        params: { productType: this.apiProductType, isPlan: 'profit_loss' },
+      }
     );
 
     return data.map(this.mapOrder);
@@ -464,7 +472,9 @@ export class BitgetExchange extends BaseExchange {
       data: { data },
     } = await this.xhr.get<{ data: Array<Record<string, any>> }>(
       ENDPOINTS.ALGO_ORDERS,
-      { params: { productType: this.apiProductType, isPlan: 'plan' } }
+      {
+        params: { productType: this.apiProductType, isPlan: 'plan' },
+      }
     );
 
     return data.map(this.mapOrder);

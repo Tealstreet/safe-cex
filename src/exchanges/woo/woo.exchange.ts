@@ -410,7 +410,9 @@ export class WOOXExchange extends BaseExchange {
     try {
       const { data } = await this.xhr.get<{ rows: Array<Record<string, any>> }>(
         ENDPOINTS.ORDERS,
-        { params: { status: 'INCOMPLETE' } }
+        {
+          params: { status: 'INCOMPLETE' },
+        }
       );
 
       const orders: Order[] = data.rows.reduce<Order[]>((acc, o) => {

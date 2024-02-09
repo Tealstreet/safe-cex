@@ -4,6 +4,7 @@ import { multiply } from 'lodash';
 import { OrderSide } from '../../types';
 import { jsonParse } from '../../utils/json-parse';
 import { virtualClock } from '../../utils/virtual-clock';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { GateExchange } from './gate.exchange';
@@ -14,7 +15,7 @@ export class GatePrivateWebsocket extends BaseWebSocket<GateExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 

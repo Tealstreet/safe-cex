@@ -65,7 +65,7 @@ class VirtualClock {
     try {
       const {
         data: { time },
-      } = await axios.get('https://tuleep.trade/api/time', { timeout: 5000 });
+      } = await axios.get('/api/time', { timeout: 5000 });
       return dayjs.utc(time);
     } catch {
       // ignore

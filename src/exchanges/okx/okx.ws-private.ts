@@ -7,6 +7,7 @@ import { jsonParse } from '../../utils/json-parse';
 import { roundUSD } from '../../utils/round-usd';
 import { multiply, subtract } from '../../utils/safe-math';
 import { virtualClock } from '../../utils/virtual-clock';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { OKXExchange } from './okx.exchange';
@@ -27,7 +28,7 @@ export class OKXPrivateWebsocket extends BaseWebSocket<OKXExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(this.endpoint);
+      this.ws = new WebsocketWorker(this.endpoint);
       this.ws.addEventListener('open', this.onOpen);
       this.ws.addEventListener('message', this.onMessage);
       this.ws.addEventListener('close', this.onClose);

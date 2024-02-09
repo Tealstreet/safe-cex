@@ -2,6 +2,7 @@ import type { OHLCVOptions, Candle, OrderBook } from '../../types';
 import { v } from '../../utils/get-key';
 import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { BinanceExchange } from './binance.exchange';
@@ -23,7 +24,7 @@ export class BinancePublicWebsocket extends BaseWebSocket<BinanceExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL.public[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 

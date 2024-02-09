@@ -10,6 +10,7 @@ import { jsonParse } from '../../utils/json-parse';
 import { calcOrderBookTotal, sortOrderBook } from '../../utils/orderbook';
 import { roundUSD } from '../../utils/round-usd';
 import { multiply } from '../../utils/safe-math';
+import { WebsocketWorker } from '../../ws/WebsocketWorker';
 import { BaseWebSocket } from '../base.ws';
 
 import type { OKXExchange } from './okx.exchange';
@@ -35,7 +36,7 @@ export class OKXPublicWebsocket extends BaseWebSocket<OKXExchange> {
 
   connectAndSubscribe = () => {
     if (!this.isDisposed) {
-      this.ws = new WebSocket(
+      this.ws = new WebsocketWorker(
         BASE_WS_URL.public[this.parent.options.testnet ? 'testnet' : 'livenet']
       );
 
